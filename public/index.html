@@ -1,6 +1,9 @@
 ﻿<!DOCTYPE html>
 
 <link rel="stylesheet" type="text/css" href="trcgrid.css">
+  
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDPEmHsLQ-OQpWL2AsjYwYq55XjW7k1oZY&libraries=drawing,geometry" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/randomcolor/0.4.2/randomColor.min.js"></script>
 
 <script src="https://code.jquery.com/jquery-1.11.3.min.js"></script>
 <script src="bundle.js"></script>
@@ -34,26 +37,30 @@
         Loading...
     </div>
     <div id="main2"  style="display:none">
-        <p>
-            This is an empty TRC plugin that demonstrates calling PluginMain().
-        </p>
-
-        <h2>Basic sheet information:</h2>
-        <table>
-            <tr><td>Name:</td><td><div id="SheetName"></div></td></tr>
-            <tr><td>Parent:</td><td><div id="ParentSheetName"></div></td></tr>
-            <tr><td>Version:</td><td><div id="SheetVer"></div></td></tr>
-            <tr><td>Total Rows:</td><td><div id="RowCount"></div></td></tr>
-            <tr><td>Last refreshed:</td><td><div id="LastRefreshed"></div></td></tr>
-        </table>      
-
-        <button onclick="_plugin.onClickRefresh()">Refresh!</button>
-
-        <button onclick="_plugin.onGetSheetContents()">GetSheetContents!</button>
-        <div id="contents">
-
-        <p>Congratulations! You made your first TRC plugin!</p>
+    <section>
+      <div class="container-fluid">
+        <div class="row">
+          <div class="col-md-5">
+            <h2> Walklists </h2>
+            <table class="table" id="walklists">
+              <thead> 
+                <tr>
+                  <th> Name </th>
+                  <th> # of records </th>
+                  <th> Assigned? </th>
+                  <th> </th>
+                </tr> 
+              </thead>
+              <tbody>
+              </tbody>
+            </table>
+          </div>
+          <div class="col-md-7">
+            <div id="map"></div>
+          </div>
         </div>
+      </div>
+    </section>  
     </div>
 </body>
 </html>
