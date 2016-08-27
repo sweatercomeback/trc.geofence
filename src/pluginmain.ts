@@ -6,11 +6,26 @@
 import * as trc from '../node_modules/trclib/trc2';
 import * as html from '../node_modules/trclib/trchtml';
 import * as trcFx from '../node_modules/trclib/trcfx';
+import * as trcPoly from '../node_modules/trclib/polygonHelper';
 
 declare var $: any; // external definition for JQuery
 
 declare var google: any; // external definition for google map 
 declare var randomColor: any; // from randomColor()
+
+// $$$ get from TRC
+interface IGeoPoint {
+    Lat: number;
+    Long: number;
+}
+
+// List of child records 
+interface IChildRecord {
+    sheetId: string;
+    name: string;
+    dataId: string; // data for the polygon 
+    polygon: any; // google maps polygon 
+}
 
 export class MyPlugin {
     private _sheet: trc.Sheet;
@@ -20,7 +35,9 @@ export class MyPlugin {
     private _data: trc.ISheetContents;
     private _map: any;
     private _markers: any; // map markers; { recId: marker }
-    private _polygons: any; //polylines/polygons; { sheetId: polygon/polyline }
+    private _partitions: { [id: string]: IChildRecord; }; // Map sheetId --> IChildRecord
+
+    private _polyHelper: trcPoly.PolygonHelper;
 
 
     // Entry point called from brower. 
@@ -37,33 +54,114 @@ export class MyPlugin {
 
         trcSheet.getInfo((info) => {
             trcSheet.getSheetContents((data) => {
-                trcSheet.getChildren(children => {
-                    var plugin = new MyPlugin(trcSheet, info, data, children);
 
+                var polyHelper = new trcPoly.PolygonHelper(trcSheet);
+
+                trcSheet.getChildren(children => {
+                    var plugin = new MyPlugin(trcSheet, info, data, children, polyHelper);                   
                     next(plugin);
+
+                    // $$$ We shouldn't need a deferred timer here, but this invoke must come after the map finishes drawing else
+                    // the google map doesn't render properly. Don't know why.
+                    // It'd be great to get rid of the timer. 
+                    setTimeout( () => plugin.FinishInit(null), 3000);                    
                 });
             });
         });
+    }
 
+    // Load existing sheets and draw the polygons 
+    private FinishInit(callback: () => void): void {
+        // Get existing child sheets
+        this._sheet.getChildren(children => {
+            for (var i = 0; i < children.length; i++) {
+                var child = children[i];
+                this.Init2Worker(child);
+            }
+        });
+    }
+
+    // Populate 1 partition (draw the polygon, data structures, etc) 
+    private Init2Worker(child: trc.IGetChildrenResultEntry): void {
+        this._polyHelper.lookupNameFromId(child.Name, (dataId) => {
+            // Is it a polygon?
+            if (dataId != null) {
+                var childSheet = this._sheet.getSheetById(child.Id);
+                childSheet.getInfo(childInfo => {
+                    this._polyHelper.getPolygonById(dataId, (polySchema) => {
+                        var polygon = MyPlugin.newPolygon(polySchema, this._map);
+
+                        var sheetId = child.Id;
+                        this._partitions[sheetId] = {
+                            sheetId: sheetId,
+                            name: child.Name,
+                            dataId: dataId,
+                            polygon: polygon
+                        };
+
+                        this.physicallyAddPolygon(child.Name, polygon, childInfo.CountRecords, dataId);
+                    });
+                });
+            }
+        });
     }
 
     public constructor(
         sheet: trc.Sheet,
         info: trc.ISheetInfoResult,
         data: trc.ISheetContents,
-        children: trc.IGetChildrenResultEntry[]) {
+        children: trc.IGetChildrenResultEntry[],
+        polyHelper: trcPoly.PolygonHelper
+    ) {
         this._sheet = sheet;
         this._data = data;
         this._info = info;
         this._map = this.initMap(info.Latitute, info.Longitude);
         this._markers = {};
-        this._polygons = {};
+        this._partitions = {};
+        this._polyHelper = polyHelper;
 
         this.addMarkers();
         this.initDrawingManager(this._map); // adds drawing capability to map
+ 
+        // Loading existing children will happen in FinishInit()
+    }
 
+    // https://developers.google.com/maps/documentation/javascript/examples/polygon-simple
+    static newPolygon(schema: trc.IPolygonSchema, map: any): any {
+        var coords: any = [];
+        for (var i = 0; i < schema.Lat.length; i++) {
+            coords.push({
+                lat: schema.Lat[i],
+                lng: schema.Long[i]
+            })
+        }
 
-        // $$$ Load existing Children  
+        var polygon = new google.maps.Polygon({
+            paths: coords,
+            strokeColor: '#FF0000',
+            strokeOpacity: 0.8,
+            strokeWeight: 2,
+            fillColor: '#FF0000',
+            fillOpacity: 0.35
+        });
+        polygon.setMap(map);
+
+        return polygon;
+    }
+
+    // https://developers.google.com/maps/documentation/javascript/examples/polygon-arrays
+    // Convert a google polgyon to a TRC array
+    static getVertices(polygon: any): IGeoPoint[] {
+        var vertices = polygon.getPath();
+
+        var result: IGeoPoint[] = [];
+
+        for (var i = 0; i < vertices.getLength(); i++) {
+            var xy = vertices.getAt(i);
+            result.push({ Lat: xy.lat(), Long: xy.lng() });
+        }
+        return result;
     }
 
 
@@ -113,7 +211,7 @@ export class MyPlugin {
     // function to be returned in the event a checkbox is clicked
     private assignedCheckboxClickFx(sheetId: string) {
         var outer = this;
-        return function (event: any)  {
+        return function (event: any) {
             if (this.checked) {
                 outer.setMarkersOpacity(sheetId, 0.2);
                 outer.setPolygonOpacity(sheetId, 0.2);
@@ -128,9 +226,9 @@ export class MyPlugin {
 
     // remove polygon/polyline from global var _polygons
     private removeGlobalPolygon(sheetId: string) {
-        var polygon = this._polygons[sheetId];
+        var polygon = this._partitions[sheetId].polygon;
         polygon.setMap(null);
-        delete this._polygons[sheetId];
+        delete this._partitions[sheetId];
     }
 
     // remove walklist from sidebar
@@ -159,44 +257,45 @@ export class MyPlugin {
     }
 
     private setPolygonOpacity(sheetId: string, opacity: number) {
-        var polygon = this._polygons[sheetId];
+        var polygon = this._partitions[sheetId].polygon;
         polygon.setOptions({ strokeOpacity: opacity });
     }
 
 
     // function to be returned when delete 'x' is clicked
     private deleteWalklistClickFx(sheetId: string) {
-        return  (event: any) => {
+        return (event: any) => {
             var remove = confirm("Do you wish to delete this walklist?");
 
             if (remove) {
-                // $$$
-
-                // trcDeleteChildSheet(_sheet, sheetId, function() 
-                {
-                    this.removeWalklist(sheetId);
-                    this.removeGlobalPolygon(sheetId);
-                    this.removeMarkerSheetId(sheetId);
-                };
+                var partition = this._partitions[sheetId];
+                this._sheet.deleteChildSheet(sheetId, () => {
+                    this._sheet.deleteCustomData(trc.PolygonKind, partition.dataId, () => {                         
+                        {
+                            this.removeWalklist(sheetId);
+                            this.removeGlobalPolygon(sheetId);
+                            this.removeMarkerSheetId(sheetId);
+                        };
+                    });
+                });
             }
         }
     }
 
-    // $$$ count should be 'number'
     // add walklist to sidebar
-    private appendWalklist(name: string, sheetId: string, count: any, color: any) {
+    private appendWalklist(partitionName: string, sheetId: string, count: number, color: any) {
         var tr = document.createElement('tr');
         tr.setAttribute('style', 'border-left: 10px solid ' + color);
         tr.setAttribute('id', sheetId);
 
         // add name column
         var tdName = document.createElement('td');
-        tdName.innerHTML = name;
+        tdName.innerHTML = partitionName;
         tr.appendChild(tdName);
 
         // add record count column
         var tdCount = document.createElement('td');
-        tdCount.innerHTML = count;
+        tdCount.innerHTML = count.toString();
         tdCount.setAttribute('class', 'record-count');
         tr.appendChild(tdCount);
 
@@ -223,19 +322,42 @@ export class MyPlugin {
         // $('#walklists').append("<tr style='border-left: 10px solid "+color+"' id='"+sheetId+"'><td>"+name+"</td><td>"+count+"</td><td><input type='checkbox'></td></tr>")
     }
 
-    private createWalklist(name: string, ids: string[], polygon: any) {
-        //trcCreateChildSheet(_sheet, name, ids, function(childSheetRef) 
-        {
-            var color = randomColor();
-            //var sheetId = childSheetRef.SheetId;
-            var sheetId = "ID_" + name; // $$$
+    // Called when we finish drawing a polygon and confirmed we want to create a walklist. 
+    private createWalklist(partitionName: string, ids: string[], polygon: any) {
+        var vertices = MyPlugin.getVertices(polygon);
+        this._polyHelper.createPolygon(partitionName, vertices, (dataId) => {
 
-            this.addPolygonResizeEvents(polygon, sheetId);
-            this.fillPolygon(polygon, color);
-            this.globallyAddPolygon(polygon, sheetId);
-            this.appendWalklist(name, sheetId, ids.length, color);
-            this.updateMarkersWithSheetId(ids, sheetId);
-        };
+            var filter = "IsInPolygon('" + dataId + "',Lat,Long)";
+            this._sheet.createChildSheetFromFilter(partitionName, filter, false, (childSheet: trc.Sheet) => {
+                //alert('Yay! Poly saved:' + dataId);
+                //var sheetId = childSheetRef.SheetId;
+                var sheetId = childSheet.getId();
+
+                this._partitions[sheetId] = {
+                    sheetId: sheetId,
+                    name: partitionName,
+                    dataId: dataId,
+                    polygon: polygon
+                };
+
+                this.physicallyAddPolygon(name, polygon, ids.length, sheetId);
+
+                //this.addPolygonResizeEvents(polygon, sheetId);
+                //this.fillPolygon(polygon, color);
+                //this.globallyAddPolygon(polygon, sheetId);
+                //this.appendWalklist(name, sheetId, ids.length, color);
+                this.updateMarkersWithSheetId(ids, sheetId);
+            });
+        });
+    }
+
+    private physicallyAddPolygon(partitionName: string, polygon: any, count: number, sheetId: string): void {
+        var color = randomColor();
+
+        //this.addPolygonResizeEvents(polygon, sheetId);
+        this.fillPolygon(polygon, color);
+        this.appendWalklist(partitionName, sheetId, count, color);
+        //this.updateMarkersWithSheetId(ids, sheetId); $$$
     }
 
     // add child sheet id to markers with lat/lng inside walklist
@@ -248,11 +370,6 @@ export class MyPlugin {
         }
     }
 
-    // adds polygon/polyline to global var _polygons
-    private globallyAddPolygon(polygon: any, sheetId: string) {
-        this._polygons[sheetId] = polygon;
-    }
-
     private fillPolygon(polygon: any, color: any) {
         polygon.setOptions({
             fillColor: color,
@@ -260,28 +377,32 @@ export class MyPlugin {
         });
     }
 
-    private updateWalklist(ids : string[], sheetId :string) {
-        /* $$$
-        trcPatchChildSheetRecIds(_sheet, sheetId, ids, function() {
-            updateRecordNum(sheetId, ids.length);
-        });
-        */
+    /*
+    // $$$ This should be migrated to just update the Polygon Data. 
+    // Then rerunning the filter will pick up the new boundary 
+        private updateWalklist(ids: string[], sheetId: string) {        
+            trcPatchChildSheetRecIds(_sheet, sheetId, ids, function() {
+                updateRecordNum(sheetId, ids.length);
+            });        
         }
-
-
-    // event listeners for when polygon shape is modified
-    private addPolygonResizeEvents(polygon: any, sheetId: string) {
-        google.maps.event.addListener(polygon.getPath(), 'set_at', () => {
-            this.updateWalklist(this.getPolygonIds(polygon), sheetId);
-        });
-
-        google.maps.event.addListener(polygon.getPath(), 'insert_at',  () => {
-            this.updateWalklist(this.getPolygonIds(polygon), sheetId);
-        });
-    }
+    
+    
+        // event listeners for when polygon shape is modified
+        private addPolygonResizeEvents(polygon: any, sheetId: string) {
+            //alert("Poly resize is called"); // $$$
+    
+            google.maps.event.addListener(polygon.getPath(), 'set_at', () => {
+                this.updateWalklist(this.getPolygonIds(polygon), sheetId);
+            });
+    
+            google.maps.event.addListener(polygon.getPath(), 'insert_at', () => {
+                this.updateWalklist(this.getPolygonIds(polygon), sheetId);
+            });
+        }
+    */
 
     // return rec ids within a polygon
-    private getPolygonIds(polygon: any) : string[] {
+    private getPolygonIds(polygon: any): string[] {
         var ids: string[] = [];
         var numRows = this._info.CountRecords;
 
