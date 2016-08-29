@@ -1,5 +1,5 @@
 // TypeScript
-// JScript functions for BasicList.Html. 
+// JScript functions for GeoFencing plugin.  
 // This calls TRC APIs and binds to specific HTML elements from the page.
 // Adapted from: https://raw.githubusercontent.com/hansy/trc-geofencing-plugin  
 
@@ -9,6 +9,7 @@ import * as trcFx from '../node_modules/trclib/trcfx';
 import * as trcPoly from '../node_modules/trclib/polygonHelper';
 
 declare var $: any; // external definition for JQuery
+declare var MarkerClusterer: any; // external definition 
 
 declare var google: any; // external definition for google map 
 declare var randomColor: any; // from randomColor()
@@ -34,10 +35,11 @@ export class MyPlugin {
     private _info: trc.ISheetInfoResult;
     private _data: trc.ISheetContents;
     private _map: any;
-    private _markers: any; // map markers; { recId: marker }
+    private _markers: any[]; // map markers; { recId: marker }
     private _partitions: { [id: string]: IChildRecord; }; // Map sheetId --> IChildRecord
 
     private _polyHelper: trcPoly.PolygonHelper;
+    private _markerCluster: any;
 
 
     // Entry point called from brower. 
@@ -58,13 +60,13 @@ export class MyPlugin {
                 var polyHelper = new trcPoly.PolygonHelper(trcSheet);
 
                 trcSheet.getChildren(children => {
-                    var plugin = new MyPlugin(trcSheet, info, data, children, polyHelper);                   
+                    var plugin = new MyPlugin(trcSheet, info, data, children, polyHelper);
                     next(plugin);
 
                     // $$$ We shouldn't need a deferred timer here, but this invoke must come after the map finishes drawing else
                     // the google map doesn't render properly. Don't know why.
                     // It'd be great to get rid of the timer. 
-                    setTimeout( () => plugin.FinishInit(null), 3000);                    
+                    setTimeout(() => plugin.FinishInit(null), 3000);
                 });
             });
         });
@@ -117,13 +119,17 @@ export class MyPlugin {
         this._data = data;
         this._info = info;
         this._map = this.initMap(info.Latitute, info.Longitude);
-        this._markers = {};
+        this._markers = [];
         this._partitions = {};
         this._polyHelper = polyHelper;
 
         this.addMarkers();
         this.initDrawingManager(this._map); // adds drawing capability to map
- 
+
+        this._markerCluster = new MarkerClusterer(
+            this._map,
+            this._markers, { imagePath: 'https://cdn.rawgit.com/googlemaps/js-marker-clusterer/gh-pages/images/m' });
+
         // Loading existing children will happen in FinishInit()
     }
 
@@ -270,7 +276,7 @@ export class MyPlugin {
             if (remove) {
                 var partition = this._partitions[sheetId];
                 this._sheet.deleteChildSheet(sheetId, () => {
-                    this._sheet.deleteCustomData(trc.PolygonKind, partition.dataId, () => {                         
+                    this._sheet.deleteCustomData(trc.PolygonKind, partition.dataId, () => {
                         {
                             this.removeWalklist(sheetId);
                             this.removeGlobalPolygon(sheetId);
@@ -364,10 +370,9 @@ export class MyPlugin {
     private updateMarkersWithSheetId(ids: string[], sheetId: string) {
         var total = ids.length;
 
-        for (var i = 0; i < total; i++) {
-            var id = ids[i];
-            this._markers[id].sheetId = sheetId;
-        }
+        this._markers.forEach(function (item) {
+            item.sheetId = sheetId;
+        })
     }
 
     private fillPolygon(polygon: any, color: any) {
@@ -471,12 +476,13 @@ export class MyPlugin {
         var latLng = new google.maps.LatLng(lat, lng);
         var marker = new google.maps.Marker({
             position: latLng,
-            map: this._map,
             id: recId,
             sheetId: ""
         });
+        // Don't set marker.map since this will be part of the clusterManager. 
 
-        this._markers[recId] = marker;
+        //this._markers[recId] = marker;
+        this._markers.push(marker);
     }
 
 
