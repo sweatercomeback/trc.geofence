@@ -29,18 +29,26 @@ interface IPartition {
     sheetId: string;
     name: string;
     dataId: string; // data for the polygon 
-    polygon: any; // google maps polygon 
+    polygon: any; // google maps polygon
+    infoWindow: any; // google Info window for displaying polygon name  
 }
 
+// Processed view on ISheetContents.
+// - keeps only the data we need
+// - ISheetContents is all string based. This can parse values
+// - discard missing Lat/Long values.  
+interface IRow {
+    RecId: string;
+    Lat: number;
+    Long: number;
+}
 
-
-
+// Main plugin. 
 export class MyPlugin {
     private _sheet: trc.Sheet;
-    private _options: trc.PluginOptionsHelper;
+    private _opts: trc.IPluginOptions;
 
-    private _info: trc.ISheetInfoResult;
-    private _data: trc.ISheetContents;
+    private _rows: IRow[];
     private _map: any;
     private _markers: any[]; // map markers; { recId: marker }
     private _partitions: { [id: string]: IPartition; }; // Map sheetId --> IPartition
@@ -48,9 +56,19 @@ export class MyPlugin {
     private _polyHelper: trcPoly.PolygonHelper;
     private _markerCluster: any;
 
-    // $$$ Not computed properly when polygons overlap. 
     private _totalVisible: number; // Markers not yet assigned to a partition
 
+    // $$$ find a way to avoid this.  
+    private static _pluginId : string ="Geofencing.Beta";  
+
+    // $$$ Move to PluginOptionsHelper? 
+    private getGotoLinkSheet(sheetId : string ) : string {
+        if (this._opts == undefined) {
+            return "/"; // avoid a crash
+        }
+        return this._opts.gotoUrl + "/" + sheetId + "/" + 
+            MyPlugin._pluginId  + "/index.html";
+    } 
 
     // Entry point called from brower. 
     // This creates real browser objects and passes in. 
@@ -60,8 +78,8 @@ export class MyPlugin {
         next: (plugin: MyPlugin) => void
     ): void {
         var trcSheet = new trc.Sheet(sheet);
-        var opts2 = trc.PluginOptionsHelper.New(opts, trcSheet);
-
+        // var opts2 = trc.PluginOptionsHelper.New(opts, trcSheet);
+        
         // Do any IO here...
         html.Loading("prebody2");
 
@@ -71,7 +89,7 @@ export class MyPlugin {
                 var polyHelper = new trcPoly.PolygonHelper(trcSheet);
 
                 trcSheet.getChildren(children => {
-                    var plugin = new MyPlugin(trcSheet, info, data, children, polyHelper);
+                    var plugin = new MyPlugin(trcSheet, info, data, children, polyHelper, opts);
                     next(plugin);
 
                     // $$$ We shouldn't need a deferred timer here, but this invoke must come after the map finishes drawing else
@@ -136,6 +154,13 @@ export class MyPlugin {
             }
         };
 
+        if (children.length == 0) 
+        {
+            remaining = 1;
+            next();
+            return;
+        }
+
         // Do the first pass for all IO. 
         // Dispatch IO in parallel. 
         for (var i = 0; i < children.length; i++) {
@@ -165,7 +190,8 @@ export class MyPlugin {
                                     sheetId: sheetId,
                                     name: child.Name,
                                     dataId: dataId,
-                                    polygon: null // fill in later.                            
+                                    polygon: null, // fill in later.      
+                                    infoWindow: null
                                 };
                             }
                             next();
@@ -190,21 +216,50 @@ export class MyPlugin {
         });
     }
 
+    private static parseSheetContents(data: trc.ISheetContents): IRow[] {
+        var colRecId = data["RecId"];
+        var colLat = data["Lat"];
+        var colLong = data["Long"];
+
+        var result: IRow[] = [];
+        var numRows = colRecId.length;
+
+        for (var i = 0; i < numRows; i++) {
+            var id = colRecId[i];
+            var strlat = colLat[i];
+            var strlng = colLong[i];
+
+            var lat = parseFloat(strlat);
+            var lng = parseFloat(strlng);
+
+            if (isNaN(lat) || isNaN(lng)) {
+                continue;
+            }
+
+            result.push({
+                RecId: id,
+                Lat: lat,
+                Long: lng
+            });
+        }
+        return result;
+    }
 
     public constructor(
         sheet: trc.Sheet,
         info: trc.ISheetInfoResult,
         data: trc.ISheetContents,
         children: trc.IGetChildrenResultEntry[],
-        polyHelper: trcPoly.PolygonHelper
+        polyHelper: trcPoly.PolygonHelper,
+        opts: trc.IPluginOptions
     ) {
         this._sheet = sheet;
-        this._data = data;
-        this._info = info;
+        this._rows = MyPlugin.parseSheetContents(data);
         this._map = this.initMap(info.Latitute, info.Longitude);
         this._markers = [];
         this._partitions = {};
         this._polyHelper = polyHelper;
+        this._opts = opts;
 
         this.addMarkers();
         this.initDrawingManager(this._map); // adds drawing capability to map
@@ -232,7 +287,8 @@ export class MyPlugin {
             strokeOpacity: 0.8,
             strokeWeight: 2,
             fillColor: '#FF0000',
-            fillOpacity: 0.35
+            fillOpacity: 0.35,
+            editable: true
         });
         polygon.setMap(map);
 
@@ -272,14 +328,13 @@ export class MyPlugin {
         // add event listener for when shape is drawn
         google.maps.event.addListener(drawingManager, 'overlaycomplete', (event: any) => {
             var polygon = event.overlay;
-            var recIds = this.getPolygonIds(polygon);
+            var countInside = this.countNumberInPolygon(polygon);
 
-            if (recIds.length === 0) {
+            if (countInside === 0) {
                 alert("No records found in polygon");
                 event.overlay.setMap(null); // remove polygon
             } else {
                 var walklistName = prompt("Name of walklist");
-
 
                 if (walklistName === null) {
                     event.overlay.setMap(null); // remove polygon
@@ -287,7 +342,7 @@ export class MyPlugin {
                     alert("Walklist name can't be empty");
                     event.overlay.setMap(null);
                 } else {
-                    this.createWalklist(walklistName, recIds, polygon);
+                    this.createWalklist(walklistName, countInside, polygon);
                 }
 
             }
@@ -312,11 +367,16 @@ export class MyPlugin {
         };*/
     }
 
-
-
     // remove polygon/polyline from global var _polygons
     private removeGlobalPolygon(sheetId: string) {
-        var polygon = this._partitions[sheetId].polygon;
+        var partition = this._partitions[sheetId];
+
+        var infoWindow = partition.infoWindow;
+        if (infoWindow != null) {
+            infoWindow.close();
+        }
+
+        var polygon = partition.polygon;
         polygon.setMap(null);
         delete this._partitions[sheetId];
     }
@@ -326,35 +386,6 @@ export class MyPlugin {
         var tr = document.getElementById(sheetId);
         tr.parentNode.removeChild(tr);
     }
-
-    /*
-        // unassign marker from child sheet
-        private removeMarkerSheetId(sheetId: string) {
-            for (var id in this._markers) {
-                var marker = this._markers[id];
-                if (marker.sheetId === sheetId) {
-                    marker.sheetId = "";
-                }
-            }
-        }
-        */
-
-    /*
-        // $$$ Remove
-        private setMarkersOpacity(sheetId: string, opacity: number) {
-            for (var id in this._markers) {
-                var marker = this._markers[id];
-                if (marker.sheetId === sheetId) {
-                    marker.setOpacity(opacity);
-                }
-            }
-        }
-    
-        private setPolygonOpacity(sheetId: string, opacity: number) {
-            var polygon = this._partitions[sheetId].polygon;
-            polygon.setOptions({ strokeOpacity: opacity });
-        }
-    */
 
     // function to be returned when delete 'x' is clicked
     private deleteWalklistClickFx(sheetId: string) {
@@ -370,7 +401,6 @@ export class MyPlugin {
                             this.removeGlobalPolygon(sheetId);
                             this.showMarkers(partition.polygon);
                             this.updateClusterMap();
-                            this.updateCounterText();
                         };
                     });
                 });
@@ -386,22 +416,17 @@ export class MyPlugin {
 
         // add name column
         var tdName = document.createElement('td');
-        tdName.innerHTML = partitionName;
+        var gotoUrl = this.getGotoLinkSheet(sheetId);
+        tdName.innerHTML = "<a target='_blank' href='" + gotoUrl + "'>"  + partitionName + "</a>";
         tr.appendChild(tdName);
 
         // add record count column
+        
+
         var tdCount = document.createElement('td');
         tdCount.innerHTML = count.toString();
         tdCount.setAttribute('class', 'record-count');
         tr.appendChild(tdCount);
-
-        // add assigned checkbox column
-        var tdCheckbox = document.createElement('td');
-        var checkbox = document.createElement('input');
-        checkbox.setAttribute('type', 'checkbox');
-        //checkbox.onclick = this.assignedCheckboxClickFx(sheetId);
-        tdCheckbox.appendChild(checkbox);
-        tr.appendChild(tdCheckbox);
 
         // add delete column
         var tdDelete = document.createElement('td');
@@ -419,7 +444,7 @@ export class MyPlugin {
     }
 
     // Called when we finish drawing a polygon and confirmed we want to create a walklist. 
-    private createWalklist(partitionName: string, ids: string[], polygon: any) {
+    private createWalklist(partitionName: string, countInside: number, polygon: any) {
         var vertices = MyPlugin.getVertices(polygon);
         this._polyHelper.createPolygon(partitionName, vertices, (dataId) => {
 
@@ -431,19 +456,41 @@ export class MyPlugin {
                     sheetId: sheetId,
                     name: partitionName,
                     dataId: dataId,
-                    polygon: polygon
+                    polygon: polygon,
+                    infoWindow: null // assign later
                 };
 
-                this.physicallyAddPolygon(name, polygon, ids.length, sheetId);
+                this.physicallyAddPolygon(partitionName, polygon, countInside, sheetId);
                 this.updateClusterMap();
-
-                //this.addPolygonResizeEvents(polygon, sheetId);
-                //this.fillPolygon(polygon, color);
-                //this.globallyAddPolygon(polygon, sheetId);
-                //this.appendWalklist(name, sheetId, ids.length, color);
-                //this.updateMarkersWithSheetId(ids, sheetId);
             });
         });
+    }
+
+    // Helper to get the center of a polygon. Useful for adding a label.
+    // http://stackoverflow.com/questions/3081021/how-to-get-the-center-of-a-polygon-in-google-maps-v3
+    private static polygonCenter(poly: any): any {
+        var lowx: number,
+            highx: number,
+            lowy: number,
+            highy: number,
+            lats: number[] = [],
+            lngs: number[] = [],
+            vertices = poly.getPath();
+
+        for (var i = 0; i < vertices.length; i++) {
+            lngs.push(vertices.getAt(i).lng());
+            lats.push(vertices.getAt(i).lat());
+        }
+
+        lats.sort();
+        lngs.sort();
+        lowx = lats[0];
+        highx = lats[vertices.length - 1];
+        lowy = lngs[0];
+        highy = lngs[vertices.length - 1];
+        var center_x = lowx + ((highx - lowx) / 2);
+        var center_y = lowy + ((highy - lowy) / 2);
+        return (new google.maps.LatLng(center_x, center_y));
     }
 
     private physicallyAddPolygon(partitionName: string, polygon: any, count: number, sheetId: string): void {
@@ -452,123 +499,117 @@ export class MyPlugin {
         //this.addPolygonResizeEvents(polygon, sheetId);
         this.fillPolygon(polygon, color);
         this.appendWalklist(partitionName, sheetId, count, color);
-        //this.updateMarkersWithSheetId(ids, sheetId); $$$
-
         this.hideMarkers(polygon);
-        this.updateCounterText();
+        this.addPolygonResizeEvents(polygon, sheetId);
+
+        // Add a label to the polygon. 
+        var location = MyPlugin.polygonCenter(polygon);
+        var infoWindow = new google.maps.InfoWindow({
+            content: partitionName + "(" + count + ")",
+            position: location
+        });
+        infoWindow.open(this._map);
+        this._partitions[sheetId].infoWindow = infoWindow;
     }
 
     private updateCounterText(): void {
         var total = this._markers.length;
         var numAssigned = this._markers.length - this._totalVisible;
-        var perAssigned = numAssigned * 100 / total;
+        var perAssigned = Math.round(numAssigned * 100 / total);
 
         var msg = total + " total records. " + numAssigned + " (" + perAssigned + "%) have been assigned to a partition. "
             + this._totalVisible + " records are not yet assigned.";
         $("#counters").text(msg);
     }
 
-    private showMarkers(polygon: any): void {
-        var ids: string[] = [];
-        var numRows = this._info.CountRecords;
+    // helper to invoke predicate on each point inside the polygon
+    private forEachInPolygin(
+        polygon: any,
+        predicate: (idx: number) => void
+    ): void {
+        var numRows = this._rows.length;
 
         for (var i = 0; i < numRows; i++) {
-            var id = this._data["RecId"][i];
-            var lat = this._data["Lat"][i];
-            var lng = this._data["Long"][i];
+            var row = this._rows[i];
+            var lat = row.Lat;
+            var lng = row.Long;
 
             if (this.isInsidePolygon(lat, lng, polygon)) {
-                var marker = this._markers[i];
-
-                if (!marker.xvisible) {
-                    // this._markerCluster.addMarker(marker);
-                    marker.xvisible = true;
-                    this._totalVisible++;
-                }
+                predicate(i);
             }
         }
+    }
+
+    private countNumberInPolygon(polygon: any): number {
+        var total = 0;
+        this.forEachInPolygin(polygon,
+            (idx) => {
+                total++;
+            });
+        return total;
+    }
+
+    private showMarkers(polygon: any): void {
+        this.forEachInPolygin(polygon,
+            (idx) => {
+                var marker = this._markers[idx];
+
+                if (!marker.xvisible) {
+                    marker.xvisible = true;
+                }
+            });
     }
 
     private hideMarkers(polygon: any): void {
-        var ids: string[] = [];
-        var numRows = this._info.CountRecords;
+        this.forEachInPolygin(polygon,
+            (idx) => {
+                var marker = this._markers[idx];
 
-        for (var i = 0; i < numRows; i++) {
-            var id = this._data["RecId"][i];
-            var lat = this._data["Lat"][i];
-            var lng = this._data["Long"][i];
-
-            if (this.isInsidePolygon(lat, lng, polygon)) {
-                var marker = this._markers[i];
                 if (marker.xvisible) {
-                    //this._markerCluster.removeMarker(marker);
                     marker.xvisible = false;
-                    this._totalVisible--;
                 }
-            }
-        }
+            });
     }
-
-    /*
-
-    // add child sheet id to markers with lat/lng inside walklist
-    private updateMarkersWithSheetId(ids: string[], sheetId: string) {
-        var total = ids.length;
-
-        this._markers.forEach(function (item) {
-            item.sheetId = sheetId;
-        })
-    }*/
 
     private fillPolygon(polygon: any, color: any) {
         polygon.setOptions({
             fillColor: color,
-            fillOpacity: 1
+            fillOpacity: .35
         });
     }
 
-    /*
+
     // $$$ This should be migrated to just update the Polygon Data. 
     // Then rerunning the filter will pick up the new boundary 
-        private updateWalklist(ids: string[], sheetId: string) {        
-            trcPatchChildSheetRecIds(_sheet, sheetId, ids, function() {
-                updateRecordNum(sheetId, ids.length);
-            });        
-        }
-    
-    
-        // event listeners for when polygon shape is modified
-        private addPolygonResizeEvents(polygon: any, sheetId: string) {
-            //alert("Poly resize is called"); // $$$
-    
-            google.maps.event.addListener(polygon.getPath(), 'set_at', () => {
-                this.updateWalklist(this.getPolygonIds(polygon), sheetId);
+    private updatePolygonBoundary(sheetId: string) {
+        var partition = this._partitions[sheetId];
+        var polygon = partition.polygon;
+        var vertices = MyPlugin.getVertices(polygon);
+
+        this._polyHelper.updatePolygon(partition.dataId, partition.name, vertices,
+            (dataId: string) => {
+                // $$$ - UI update.If we shrink the polygon, we should add back old markers.
+                // If we shrunk, show old values. (like a delete)
+                // If we grew, show new values. 
+                this.hideMarkers(polygon);
+                this.updateClusterMap();
             });
-    
-            google.maps.event.addListener(polygon.getPath(), 'insert_at', () => {
-                this.updateWalklist(this.getPolygonIds(polygon), sheetId);
-            });
-        }
-    */
-
-
-    // return rec ids within a polygon
-    private getPolygonIds(polygon: any): string[] {
-        var ids: string[] = [];
-        var numRows = this._info.CountRecords;
-
-        for (var i = 0; i < numRows; i++) {
-            var id = this._data["RecId"][i];
-            var lat = this._data["Lat"][i];
-            var lng = this._data["Long"][i];
-
-            if (this.isInsidePolygon(lat, lng, polygon)) {
-                ids.push(id);
-            }
-        }
-
-        return ids;
     }
+
+
+    // event listeners for when polygon shape is modified
+    private addPolygonResizeEvents(polygon: any, sheetId: string) {
+        google.maps.event.addListener(polygon.getPath(), 'set_at', () => {
+            this.updatePolygonBoundary(sheetId);
+        });
+
+        google.maps.event.addListener(polygon.getPath(), 'insert_at', () => {
+            this.updatePolygonBoundary(sheetId);
+        });
+    }
+
+
+
 
 
     // returns true if lat/lng coordinates are inside drawn polygon,
@@ -600,43 +641,32 @@ export class MyPlugin {
         return gmap;
     }
 
-
-
-
     // loops through sheet records, passing their lat/lng 
     // to 'addMarker' function
     private addMarkers() {
-        var records = this._info.CountRecords;
+        var records = this._rows.length;
 
         for (var i = 0; i < records; i++) {
-            var recId = this._data["RecId"][i];
-            var lat = this._data["Lat"][i];
-            var lng = this._data["Long"][i];
+            var row = this._rows[i];
+            var recId = row.RecId;
+            var lat = row.Lat;
+            var lng = row.Long;
 
-            this.addMarker(lat, lng, recId);
+            var latLng = new google.maps.LatLng(lat, lng);
+            var marker = new google.maps.Marker({
+                position: latLng,
+                id: recId,
+                xvisible: true, // custom field
+            });
+            // Don't set marker.map since this will be part of the clusterManager.
+            this._markers.push(marker);
         }
-    }
-
-    // adds map marker based on last/lng
-    private addMarker(lat: any, lng: any, recId: string) {
-        this._totalVisible = 0;
-        var latLng = new google.maps.LatLng(lat, lng);
-        var marker = new google.maps.Marker({
-            position: latLng,
-            id: recId,
-            sheetId: "",
-            xvisible: true, // custom field
-        });
-        this._totalVisible++;
-        // Don't set marker.map since this will be part of the clusterManager. 
-
-        //this._markers[recId] = marker;
-        this._markers.push(marker);
     }
 
     // Update map to show markers set to visible. 
     // Markers that are already in a polygon are not visible.     
     private updateClusterMap() {
+        this._totalVisible = 0;
         this._markerCluster.clearMarkers();
 
         var visibleMarkers: any[] = [];
@@ -644,11 +674,11 @@ export class MyPlugin {
             var marker = this._markers[i];
             if (marker.xvisible) {
                 visibleMarkers.push(marker);
+                this._totalVisible++;
             }
         }
         this._markerCluster.addMarkers(visibleMarkers);
+
+        this.updateCounterText();
     }
-
-
-
 }
