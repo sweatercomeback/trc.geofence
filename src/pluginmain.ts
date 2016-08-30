@@ -32,6 +32,9 @@ interface IPartition {
     polygon: any; // google maps polygon 
 }
 
+
+
+
 export class MyPlugin {
     private _sheet: trc.Sheet;
     private _options: trc.PluginOptionsHelper;
@@ -75,7 +78,7 @@ export class MyPlugin {
                     // the google map doesn't render properly. Don't know why.
                     // It'd be great to get rid of the timer. 
                     setTimeout(() => plugin.FinishInit(
-                        ()=> {
+                        () => {
                             $("#prebody2").hide();
                         }
                     ), 3000);
@@ -91,7 +94,7 @@ export class MyPlugin {
 
     // Reverse of CreateFilter expression. Gets the DataId back out. 
     // Returns null if not found
-    private static GetPolygonIdFromFilter(filter: string): string {
+    public static GetPolygonIdFromFilter(filter: string): string {
         var n = filter.match(/IsInPolygon.'(.+)',Lat,Long/i);
         if (n == null) {
             return null;
@@ -100,64 +103,94 @@ export class MyPlugin {
         return dataId;
     }
 
-
+    // Performance note: Do all the UI upfront and then do all the map updates (add polygons, etc). 
+    // It's a *huge* performance penalty to interleave them because it prevents map rendering
+    // from being batched up and done all at once.  
     private BuildPartitions(
-        idx: number,
         children: trc.IGetChildrenResultEntry[],
         callback: () => void
     ): void {
-        if (idx == children.length) {
-            // Done!
-            callback();
-            return;
-        }
+        var _missing = 0;
+        var _extra: any = {};
+        var remaining = children.length;
 
-        var child = children[idx];
+        // Second pass. After we collect all the IO, then update the map. 
+        var next = () => {
+            remaining--;
+            if (remaining == 0) {
+                for (var sheetId in this._partitions) {
+                    var partition = this._partitions[sheetId];
+                    var polySchema = _extra[sheetId].polySchema;
+                    var count = _extra[sheetId].count;
 
-        var sheetId = child.Id;
-        var childSheet = this._sheet.getSheetById(sheetId);
-        childSheet.getInfo(childInfo => {
-            
-            var filter = child.Filter;
-            var dataId = MyPlugin.GetPolygonIdFromFilter(filter);
-            if (dataId == null) {
-                // there are child sheets without polygon data. Warn!!
-                this.BuildPartitions(idx + 1, children, callback);
-            } else {
-                this._polyHelper.getPolygonById(dataId, (polySchema) => {
-                    if (polySchema == null) {
-                        // Missing polygon id!! Treat as same case above. 
-                    } else {
-                        var polygon = MyPlugin.newPolygon(polySchema, this._map);
+                    partition.polygon = MyPlugin.newPolygon(polySchema, this._map);
+                    this.physicallyAddPolygon(
+                        partition.name,
+                        partition.polygon,
+                        count,
+                        partition.sheetId);
+                }
 
-                        this._partitions[sheetId] = {
-                            sheetId: sheetId,
-                            name: child.Name,
-                            dataId: dataId,
-                            polygon: polygon
-                        };
-                        this.physicallyAddPolygon(child.Name, polygon, childInfo.CountRecords, dataId);
-                    }
 
-                    this.BuildPartitions(idx + 1, children, callback);
-                });
+                callback();
             }
-        });
+        };
+
+        // Do the first pass for all IO. 
+        // Dispatch IO in parallel. 
+        for (var i = 0; i < children.length; i++) {
+            var _child = children[i];
+
+            ((child: trc.IGetChildrenResultEntry) => {
+                var sheetId = child.Id;
+                var childSheet = this._sheet.getSheetById(sheetId);
+                childSheet.getInfo(childInfo => {
+                    var filter = child.Filter;
+                    var dataId = MyPlugin.GetPolygonIdFromFilter(filter);
+                    if (dataId == null) {
+                        // there are child sheets without polygon data. Warn!!
+                        _missing++;
+                        next();
+                    } else {
+                        this._polyHelper.getPolygonById(dataId, (polySchema) => {
+                            if (polySchema == null) {
+                                _missing++;
+                            }
+                            else {
+                                _extra[sheetId] = {
+                                    polySchema: polySchema,
+                                    count: childInfo.CountRecords
+                                };
+                                this._partitions[sheetId] = {
+                                    sheetId: sheetId,
+                                    name: child.Name,
+                                    dataId: dataId,
+                                    polygon: null // fill in later.                            
+                                };
+                            }
+                            next();
+                        });
+                    }
+                });
+            })(_child); // closure
+        }
     }
+
+
+
 
     private FinishInit(callback: () => void): void {
         var other = 0;
         // Get existing child sheets
         this._sheet.getChildren(children => {
-            this.BuildPartitions(0, children, () =>
-            {
+            this.BuildPartitions(children, () => {
                 this.updateClusterMap();
                 callback();
             });
         });
     }
 
-  
+
     public constructor(
         sheet: trc.Sheet,
         info: trc.ISheetInfoResult,
@@ -306,22 +339,22 @@ export class MyPlugin {
         }
         */
 
-/*
-    // $$$ Remove
-    private setMarkersOpacity(sheetId: string, opacity: number) {
-        for (var id in this._markers) {
-            var marker = this._markers[id];
-            if (marker.sheetId === sheetId) {
-                marker.setOpacity(opacity);
+    /*
+        // $$$ Remove
+        private setMarkersOpacity(sheetId: string, opacity: number) {
+            for (var id in this._markers) {
+                var marker = this._markers[id];
+                if (marker.sheetId === sheetId) {
+                    marker.setOpacity(opacity);
+                }
             }
         }
-    }
-
-    private setPolygonOpacity(sheetId: string, opacity: number) {
-        var polygon = this._partitions[sheetId].polygon;
-        polygon.setOptions({ strokeOpacity: opacity });
-    }
-*/
+    
+        private setPolygonOpacity(sheetId: string, opacity: number) {
+            var polygon = this._partitions[sheetId].polygon;
+            polygon.setOptions({ strokeOpacity: opacity });
+        }
+    */
 
     // function to be returned when delete 'x' is clicked
     private deleteWalklistClickFx(sheetId: string) {
@@ -336,6 +369,7 @@ export class MyPlugin {
                             this.removeWalklist(sheetId);
                             this.removeGlobalPolygon(sheetId);
                             this.showMarkers(partition.polygon);
+                            this.updateClusterMap();
                             this.updateCounterText();
                         };
                     });
@@ -420,7 +454,7 @@ export class MyPlugin {
         this.appendWalklist(partitionName, sheetId, count, color);
         //this.updateMarkersWithSheetId(ids, sheetId); $$$
 
-        //this.hideMarkers(polygon);
+        this.hideMarkers(polygon);
         this.updateCounterText();
     }
 
@@ -448,7 +482,7 @@ export class MyPlugin {
 
                 if (!marker.xvisible) {
                     // this._markerCluster.addMarker(marker);
-                    marker.xvisible= true;
+                    marker.xvisible = true;
                     this._totalVisible++;
                 }
             }
