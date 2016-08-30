@@ -3,6 +3,10 @@
 // This calls TRC APIs and binds to specific HTML elements from the page.
 // Adapted from: https://raw.githubusercontent.com/hansy/trc-geofencing-plugin  
 
+// This uses cluster Manager to handle a large number of pins
+// see: https://github.com/googlemaps/js-marker-clusterer
+// https://googlemaps.github.io/js-marker-clusterer/docs/reference.html 
+
 import * as trc from '../node_modules/trclib/trc2';
 import * as html from '../node_modules/trclib/trchtml';
 import * as trcFx from '../node_modules/trclib/trcfx';
@@ -20,8 +24,8 @@ interface IGeoPoint {
     Long: number;
 }
 
-// List of child records 
-interface IChildRecord {
+// List of partitions that we created.  
+interface IPartition {
     sheetId: string;
     name: string;
     dataId: string; // data for the polygon 
@@ -36,10 +40,13 @@ export class MyPlugin {
     private _data: trc.ISheetContents;
     private _map: any;
     private _markers: any[]; // map markers; { recId: marker }
-    private _partitions: { [id: string]: IChildRecord; }; // Map sheetId --> IChildRecord
+    private _partitions: { [id: string]: IPartition; }; // Map sheetId --> IPartition
 
     private _polyHelper: trcPoly.PolygonHelper;
     private _markerCluster: any;
+
+    // $$$ Not computed properly when polygons overlap. 
+    private _totalVisible : number; // Markers not yet assigned to a partition
 
 
     // Entry point called from brower. 
@@ -72,19 +79,38 @@ export class MyPlugin {
         });
     }
 
+    // Create TRC filter expression to refer to this polygon 
+    private static CreateFilter(dataId : string)  :string {
+        return "IsInPolygon('" + dataId + "',Lat,Long)";
+    }
+
+    // Reverse of CreateFilter expression. Gets the DataId back out. 
+    // Returns null if not found
+    private static GetPolygonIdFromFilter(filter : string) :string {
+        var n = filter.match(/IsInPolygon.'(.+)',Lat,Long/i);
+        if (n == null) {
+            return null;
+        }
+        var dataId = n[1];
+        return dataId;
+    }
+
     // Load existing sheets and draw the polygons 
     private FinishInit(callback: () => void): void {
         // Get existing child sheets
         this._sheet.getChildren(children => {
             for (var i = 0; i < children.length; i++) {
                 var child = children[i];
-                this.Init2Worker(child);
+                this.AddPartitionForChild(child);
             }
         });
     }
 
+    // $$$ Switch this to do a pattern match and get the ID back out.
+    // - that works for any polygon data id (global, etc)
+    // - failure to match is an "oldstyle"; and we warn    
     // Populate 1 partition (draw the polygon, data structures, etc) 
-    private Init2Worker(child: trc.IGetChildrenResultEntry): void {
+    private AddPartitionForChild(child: trc.IGetChildrenResultEntry): void {
         this._polyHelper.lookupNameFromId(child.Name, (dataId) => {
             // Is it a polygon?
             if (dataId != null) {
@@ -122,7 +148,7 @@ export class MyPlugin {
         this._markers = [];
         this._partitions = {};
         this._polyHelper = polyHelper;
-
+        
         this.addMarkers();
         this.initDrawingManager(this._map); // adds drawing capability to map
 
@@ -243,6 +269,7 @@ export class MyPlugin {
         tr.parentNode.removeChild(tr);
     }
 
+/*
     // unassign marker from child sheet
     private removeMarkerSheetId(sheetId: string) {
         for (var id in this._markers) {
@@ -252,7 +279,9 @@ export class MyPlugin {
             }
         }
     }
+    */
 
+    // $$$ Remove
     private setMarkersOpacity(sheetId: string, opacity: number) {
         for (var id in this._markers) {
             var marker = this._markers[id];
@@ -280,7 +309,8 @@ export class MyPlugin {
                         {
                             this.removeWalklist(sheetId);
                             this.removeGlobalPolygon(sheetId);
-                            this.removeMarkerSheetId(sheetId);
+                            this.showMarkers(partition.polygon);
+                            this.updateCounterText();
                         };
                     });
                 });
@@ -333,10 +363,8 @@ export class MyPlugin {
         var vertices = MyPlugin.getVertices(polygon);
         this._polyHelper.createPolygon(partitionName, vertices, (dataId) => {
 
-            var filter = "IsInPolygon('" + dataId + "',Lat,Long)";
+            var filter = MyPlugin.CreateFilter(dataId);
             this._sheet.createChildSheetFromFilter(partitionName, filter, false, (childSheet: trc.Sheet) => {
-                //alert('Yay! Poly saved:' + dataId);
-                //var sheetId = childSheetRef.SheetId;
                 var sheetId = childSheet.getId();
 
                 this._partitions[sheetId] = {
@@ -352,7 +380,7 @@ export class MyPlugin {
                 //this.fillPolygon(polygon, color);
                 //this.globallyAddPolygon(polygon, sheetId);
                 //this.appendWalklist(name, sheetId, ids.length, color);
-                this.updateMarkersWithSheetId(ids, sheetId);
+                //this.updateMarkersWithSheetId(ids, sheetId);
             });
         });
     }
@@ -364,7 +392,63 @@ export class MyPlugin {
         this.fillPolygon(polygon, color);
         this.appendWalklist(partitionName, sheetId, count, color);
         //this.updateMarkersWithSheetId(ids, sheetId); $$$
+
+        this.hideMarkers(polygon);
+        this.updateCounterText();
     }
+
+    private updateCounterText() : void {
+        var total = this._markers.length;
+        var numAssigned = this._markers.length - this._totalVisible;
+        var perAssigned = numAssigned * 100 / total;
+         
+        var msg = total + " total records. " + numAssigned + " ("  + perAssigned + "%) have been assigned to a partition. "
+            + this._totalVisible + " records are not yet assigned."; 
+        $("#counters").text(msg);
+    }
+
+    private showMarkers(polygon : any) : void {
+         var ids: string[] = [];
+        var numRows = this._info.CountRecords;
+
+        for (var i = 0; i < numRows; i++) {
+            var id = this._data["RecId"][i];
+            var lat = this._data["Lat"][i];
+            var lng = this._data["Long"][i];
+
+            if (this.isInsidePolygon(lat, lng, polygon)) {
+                var marker = this._markers[i];
+
+                if (!marker.xvisible) {
+                    this._markerCluster.addMarker(marker);
+                    this._totalVisible++;
+                }
+            }
+        }
+    }
+
+    private hideMarkers(polygon : any) : void {
+        var ids: string[] = [];
+        var numRows = this._info.CountRecords;
+
+        for (var i = 0; i < numRows; i++) {
+            var id = this._data["RecId"][i];
+            var lat = this._data["Lat"][i];
+            var lng = this._data["Long"][i];
+
+            if (this.isInsidePolygon(lat, lng, polygon)) {
+                var marker = this._markers[i];
+                if (marker.xvisible) {
+                    this._markerCluster.removeMarker(marker);
+                    this._totalVisible --;
+                }
+            }
+        }
+
+
+    }
+
+    /*
 
     // add child sheet id to markers with lat/lng inside walklist
     private updateMarkersWithSheetId(ids: string[], sheetId: string) {
@@ -373,7 +457,7 @@ export class MyPlugin {
         this._markers.forEach(function (item) {
             item.sheetId = sheetId;
         })
-    }
+    }*/
 
     private fillPolygon(polygon: any, color: any) {
         polygon.setOptions({
@@ -473,12 +557,15 @@ export class MyPlugin {
 
     // adds map marker based on last/lng
     private addMarker(lat: any, lng: any, recId: string) {
+        this._totalVisible= 0;
         var latLng = new google.maps.LatLng(lat, lng);
         var marker = new google.maps.Marker({
             position: latLng,
             id: recId,
-            sheetId: ""
+            sheetId: "",
+            xvisible : true, // custom field
         });
+        this._totalVisible++;
         // Don't set marker.map since this will be part of the clusterManager. 
 
         //this._markers[recId] = marker;
