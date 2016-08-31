@@ -59,16 +59,16 @@ export class MyPlugin {
     private _totalVisible: number; // Markers not yet assigned to a partition
 
     // $$$ find a way to avoid this.  
-    private static _pluginId : string ="Geofencing.Beta";  
+    private static _pluginId: string = "Geofencing.Beta";
 
     // $$$ Move to PluginOptionsHelper? 
-    private getGotoLinkSheet(sheetId : string ) : string {
+    private getGotoLinkSheet(sheetId: string): string {
         if (this._opts == undefined) {
             return "/"; // avoid a crash
         }
-        return this._opts.gotoUrl + "/" + sheetId + "/" + 
-            MyPlugin._pluginId  + "/index.html";
-    } 
+        return this._opts.gotoUrl + "/" + sheetId + "/" +
+            MyPlugin._pluginId + "/index.html";
+    }
 
     // Entry point called from brower. 
     // This creates real browser objects and passes in. 
@@ -79,7 +79,7 @@ export class MyPlugin {
     ): void {
         var trcSheet = new trc.Sheet(sheet);
         // var opts2 = trc.PluginOptionsHelper.New(opts, trcSheet);
-        
+
         // Do any IO here...
         html.Loading("prebody2");
 
@@ -154,8 +154,7 @@ export class MyPlugin {
             }
         };
 
-        if (children.length == 0) 
-        {
+        if (children.length == 0) {
             remaining = 1;
             next();
             return;
@@ -351,22 +350,6 @@ export class MyPlugin {
         drawingManager.setMap(map);
     }
 
-
-    // function to be returned in the event a checkbox is clicked
-    private assignedCheckboxClickFx(sheetId: string) {
-        /*
-        var outer = this;
-        return function (event: any) {
-            if (this.checked) {
-                outer.setMarkersOpacity(sheetId, 0.2);
-                outer.setPolygonOpacity(sheetId, 0.2);
-            } else {
-                outer.setMarkersOpacity(sheetId, 1);
-                outer.setPolygonOpacity(sheetId, 1);
-            }
-        };*/
-    }
-
     // remove polygon/polyline from global var _polygons
     private removeGlobalPolygon(sheetId: string) {
         var partition = this._partitions[sheetId];
@@ -417,11 +400,11 @@ export class MyPlugin {
         // add name column
         var tdName = document.createElement('td');
         var gotoUrl = this.getGotoLinkSheet(sheetId);
-        tdName.innerHTML = "<a target='_blank' href='" + gotoUrl + "'>"  + partitionName + "</a>";
+        tdName.innerHTML = "<a target='_blank' href='" + gotoUrl + "'>" + partitionName + "</a>";
         tr.appendChild(tdName);
 
         // add record count column
-        
+
 
         var tdCount = document.createElement('td');
         tdCount.innerHTML = count.toString();

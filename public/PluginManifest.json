@@ -3,7 +3,7 @@
     "Id": "Geofencing.Beta",
     "Name": "[test-only] Beta of new Geofencing plugin",
     "Author" :  "Voter-Science",
-    "Website" :  "https://github.com/Voter-Science/TRC-API-Samples",
+    "Website" :  "https://github.com/Voter-Science/trc.geofence",
     "Description": "[test-only] A new geofencing plugin .",        
     "Version": "0.9.0", // User SemVer
     "Tags": [ "Beta" , "geofence" ]
