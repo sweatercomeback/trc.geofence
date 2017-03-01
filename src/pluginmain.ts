@@ -1,11 +1,11 @@
 // TypeScript
-// JScript functions for GeoFencing plugin.  
+// JScript functions for GeoFencing plugin.
 // This calls TRC APIs and binds to specific HTML elements from the page.
-// Adapted from: https://raw.githubusercontent.com/hansy/trc-geofencing-plugin  
+// Adapted from: https://raw.githubusercontent.com/hansy/trc-geofencing-plugin
 
 // This uses cluster Manager to handle a large number of pins
 // see: https://github.com/googlemaps/js-marker-clusterer
-// https://googlemaps.github.io/js-marker-clusterer/docs/reference.html 
+// https://googlemaps.github.io/js-marker-clusterer/docs/reference.html
 
 import * as trc from '../node_modules/trclib/trc2';
 import * as html from '../node_modules/trclib/trchtml';
@@ -13,9 +13,9 @@ import * as trcFx from '../node_modules/trclib/trcfx';
 import * as trcPoly from '../node_modules/trclib/polygonHelper';
 
 declare var $: any; // external definition for JQuery
-declare var MarkerClusterer: any; // external definition 
+declare var MarkerClusterer: any; // external definition
 
-declare var google: any; // external definition for google map 
+declare var google: any; // external definition for google map
 declare var randomColor: any; // from randomColor()
 
 // $$$ get from TRC
@@ -24,26 +24,26 @@ interface IGeoPoint {
     Long: number;
 }
 
-// List of partitions that we created.  
+// List of partitions that we created.
 interface IPartition {
     sheetId: string;
     name: string;
-    dataId: string; // data for the polygon 
+    dataId: string; // data for the polygon
     polygon: any; // google maps polygon
-    infoWindow: any; // google Info window for displaying polygon name  
+    infoWindow: any; // google Info window for displaying polygon name
 }
 
 // Processed view on ISheetContents.
 // - keeps only the data we need
 // - ISheetContents is all string based. This can parse values
-// - discard missing Lat/Long values.  
+// - discard missing Lat/Long values.
 interface IRow {
     RecId: string;
     Lat: number;
     Long: number;
 }
 
-// Main plugin. 
+// Main plugin.
 export class MyPlugin {
     private _sheet: trc.Sheet;
     private _opts: trc.IPluginOptions;
@@ -58,10 +58,10 @@ export class MyPlugin {
 
     private _totalVisible: number; // Markers not yet assigned to a partition
 
-    // $$$ find a way to avoid this.  
+    // $$$ find a way to avoid this.
     private static _pluginId: string = "Geofencing.Beta";
 
-    // $$$ Move to PluginOptionsHelper? 
+    // $$$ Move to PluginOptionsHelper?
     private getGotoLinkSheet(sheetId: string): string {
         if (this._opts == undefined) {
             return "/"; // avoid a crash
@@ -70,8 +70,8 @@ export class MyPlugin {
             MyPlugin._pluginId + "/index.html";
     }
 
-    // Entry point called from brower. 
-    // This creates real browser objects and passes in. 
+    // Entry point called from brower.
+    // This creates real browser objects and passes in.
     public static BrowserEntry(
         sheet: trc.ISheetReference,
         opts: trc.IPluginOptions,
@@ -94,7 +94,7 @@ export class MyPlugin {
 
                     // $$$ We shouldn't need a deferred timer here, but this invoke must come after the map finishes drawing else
                     // the google map doesn't render properly. Don't know why.
-                    // It'd be great to get rid of the timer. 
+                    // It'd be great to get rid of the timer.
                     setTimeout(() => plugin.FinishInit(
                         () => {
                             $("#prebody2").hide();
@@ -105,12 +105,12 @@ export class MyPlugin {
         });
     }
 
-    // Create TRC filter expression to refer to this polygon 
+    // Create TRC filter expression to refer to this polygon
     private static CreateFilter(dataId: string): string {
         return "IsInPolygon('" + dataId + "',Lat,Long)";
     }
 
-    // Reverse of CreateFilter expression. Gets the DataId back out. 
+    // Reverse of CreateFilter expression. Gets the DataId back out.
     // Returns null if not found
     public static GetPolygonIdFromFilter(filter: string): string {
         var n = filter.match(/IsInPolygon.'(.+)',Lat,Long/i);
@@ -121,9 +121,9 @@ export class MyPlugin {
         return dataId;
     }
 
-    // Performance note: Do all the UI upfront and then do all the map updates (add polygons, etc). 
+    // Performance note: Do all the UI upfront and then do all the map updates (add polygons, etc).
     // It's a *huge* performance penalty to interleave them because it prevents map rendering
-    // from being batched up and done all at once.  
+    // from being batched up and done all at once.
     private BuildPartitions(
         children: trc.IGetChildrenResultEntry[],
         callback: () => void
@@ -132,7 +132,7 @@ export class MyPlugin {
         var _extra: any = {};
         var remaining = children.length;
 
-        // Second pass. After we collect all the IO, then update the map. 
+        // Second pass. After we collect all the IO, then update the map.
         var next = () => {
             remaining--;
             if (remaining == 0) {
@@ -160,8 +160,8 @@ export class MyPlugin {
             return;
         }
 
-        // Do the first pass for all IO. 
-        // Dispatch IO in parallel. 
+        // Do the first pass for all IO.
+        // Dispatch IO in parallel.
         for (var i = 0; i < children.length; i++) {
             var _child = children[i];
 
@@ -189,7 +189,7 @@ export class MyPlugin {
                                     sheetId: sheetId,
                                     name: child.Name,
                                     dataId: dataId,
-                                    polygon: null, // fill in later.      
+                                    polygon: null, // fill in later.
                                     infoWindow: null
                                 };
                             }
@@ -386,7 +386,7 @@ export class MyPlugin {
                             this.updateClusterMap();
                         };
                     });
-                });
+                }, () => {});
             }
         }
     }
@@ -426,7 +426,7 @@ export class MyPlugin {
         // $('#walklists').append("<tr style='border-left: 10px solid "+color+"' id='"+sheetId+"'><td>"+name+"</td><td>"+count+"</td><td><input type='checkbox'></td></tr>")
     }
 
-    // Called when we finish drawing a polygon and confirmed we want to create a walklist. 
+    // Called when we finish drawing a polygon and confirmed we want to create a walklist.
     private createWalklist(partitionName: string, countInside: number, polygon: any) {
         var vertices = MyPlugin.getVertices(polygon);
         this._polyHelper.createPolygon(partitionName, vertices, (dataId) => {
@@ -445,7 +445,7 @@ export class MyPlugin {
 
                 this.physicallyAddPolygon(partitionName, polygon, countInside, sheetId);
                 this.updateClusterMap();
-            });
+            }, () => {});
         });
     }
 
@@ -485,7 +485,7 @@ export class MyPlugin {
         this.hideMarkers(polygon);
         this.addPolygonResizeEvents(polygon, sheetId);
 
-        // Add a label to the polygon. 
+        // Add a label to the polygon.
         var location = MyPlugin.polygonCenter(polygon);
         var infoWindow = new google.maps.InfoWindow({
             content: partitionName + "(" + count + ")",
@@ -562,8 +562,8 @@ export class MyPlugin {
     }
 
 
-    // $$$ This should be migrated to just update the Polygon Data. 
-    // Then rerunning the filter will pick up the new boundary 
+    // $$$ This should be migrated to just update the Polygon Data.
+    // Then rerunning the filter will pick up the new boundary
     private updatePolygonBoundary(sheetId: string) {
         var partition = this._partitions[sheetId];
         var polygon = partition.polygon;
@@ -573,7 +573,7 @@ export class MyPlugin {
             (dataId: string) => {
                 // $$$ - UI update.If we shrink the polygon, we should add back old markers.
                 // If we shrunk, show old values. (like a delete)
-                // If we grew, show new values. 
+                // If we grew, show new values.
                 this.hideMarkers(polygon);
                 this.updateClusterMap();
             });
@@ -624,7 +624,7 @@ export class MyPlugin {
         return gmap;
     }
 
-    // loops through sheet records, passing their lat/lng 
+    // loops through sheet records, passing their lat/lng
     // to 'addMarker' function
     private addMarkers() {
         var records = this._rows.length;
@@ -646,8 +646,8 @@ export class MyPlugin {
         }
     }
 
-    // Update map to show markers set to visible. 
-    // Markers that are already in a polygon are not visible.     
+    // Update map to show markers set to visible.
+    // Markers that are already in a polygon are not visible.
     private updateClusterMap() {
         this._totalVisible = 0;
         this._markerCluster.clearMarkers();
