@@ -1,7 +1,7 @@
 
 /* Styles used with TRC GridControl */
 
-/* Done! Server has acknowledged change. */ 
+/* Done! Server has acknowledged change. */
 .OkUpload {
     background-color: #adffb6;
 }
@@ -32,4 +32,12 @@ section {
 .delete-walklist-btn {
   cursor: pointer;
   color: red;
+}
+
+#filtercontainer {
+  padding: 0 0 10px 0;
+}
+
+#filterarea-form {
+  padding: 15px 0;
 }

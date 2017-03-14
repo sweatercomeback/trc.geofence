@@ -11,6 +11,7 @@ import * as trc from '../node_modules/trclib/trc2';
 import * as html from '../node_modules/trclib/trchtml';
 import * as trcFx from '../node_modules/trclib/trcfx';
 import * as trcPoly from '../node_modules/trclib/polygonHelper';
+import * as FilterArea from './filterarea';
 
 declare var $: any; // external definition for JQuery
 declare var MarkerClusterer: any; // external definition
@@ -82,11 +83,11 @@ export class MyPlugin {
 
         // Do any IO here...
         html.Loading("prebody2");
-
         trcSheet.getInfo((info) => {
             trcSheet.getSheetContents((data) => {
 
                 var polyHelper = new trcPoly.PolygonHelper(trcSheet);
+                var filterArea = new FilterArea.FilterArea('filtercontainer', trcSheet);
 
                 trcSheet.getChildren(children => {
                     var plugin = new MyPlugin(trcSheet, info, data, children, polyHelper, opts);

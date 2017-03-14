@@ -2,7 +2,7 @@
 
 <link rel="stylesheet" href="stylesheets/bootstrap.min.css">
 <link rel="stylesheet" type="text/css" href="stylesheets/trcgrid.css">
-  
+
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDPEmHsLQ-OQpWL2AsjYwYq55XjW7k1oZY&libraries=drawing,geometry" type="text/javascript"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/randomcolor/0.4.2/randomColor.min.js"></script>
 <script src="https://cdn.rawgit.com/googlemaps/js-marker-clusterer/gh-pages/src/markerclusterer.js"> </script>
@@ -12,16 +12,16 @@
 <script>
     // plugin startup shim
     var _pluginModule = require('pluginmain');
-    
+
     // Global reference to the current sheet;
     var _plugin = null;
 
     // Well-known entry point, called by hosting infrastructure
-    function PluginMain(sheetRef, opts) {                
+    function PluginMain(sheetRef, opts) {
         _pluginModule.MyPlugin.BrowserEntry(sheetRef, opts, function(plugin) {
             _plugin = plugin;
             // Called when finished loading to show main body
-            $("#prebody").hide();  
+            $("#prebody").hide();
             $("#main2").show();
 
         });
@@ -35,37 +35,38 @@
     <title>Basic TRC plugin</title>
 </head>
 <body>
-    <div id="prebody">
-        Loading...
-    </div>
     <div id="main2"  style="display:none">
     <section>
       <div class="container-fluid">
+        <div id="prebody2">
+          Loading...
+        </div>
         <div class="row">
           <div class="col-md-3">
             <h2> Walklists </h2>
             <div id="counters"></div>
             <table class="table" id="walklists">
-              <thead> 
+              <thead>
                 <tr>
                   <th> Name </th>
-                  <th># of records</th> 
+                  <th># of records</th>
                   <th> [Delete]</th>
-                </tr> 
+                </tr>
               </thead>
               <tbody>
               </tbody>
             </table>
-          </div>
-          <div id="prebody2">
-            Loading...
+            <div id="prebody">
+                Loading...
+            </div>
           </div>
           <div class="col-md-9">
+            <div id="filtercontainer"></div>
             <div id="map"></div>
           </div>
         </div>
       </div>
-    </section>  
+    </section>
     </div>
 </body>
 </html>

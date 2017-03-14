@@ -12,32 +12,28 @@ import * as mock from '../node_modules/trclib/trc2mocks';
 import * as plugin from '../src/pluginmain';
 
 
-// Override methods in the Plugin class to make it more testable. 
-// a) disable UX calls, 
-// b) inject some asserts for testing. 
+// Override methods in the Plugin class to make it more testable.
+// a) disable UX calls,
+// b) inject some asserts for testing.
 class MyPluginX extends plugin.MyPlugin {
     protected resetUi(): void {
-         // Nop - skip UI code. 
+         // Nop - skip UI code.
     }
 
     // virtual, this gets called from base class during a refresh.
-    // We're testing this gets called, and demonstrating using mocks.  
+    // We're testing this gets called, and demonstrating using mocks.
     public updateInfo(info: trc.ISheetInfoResult): void {
         // Assert!
-        assert.equal(mock.Sheet.DefaultName, info.Name);        
+        assert.equal(mock.Sheet.DefaultName, info.Name);
     }
 }
 
-// Run tests 
+// Run tests
 describe('sample test', function () {
     var obj: plugin.MyPlugin;
 
     it('creates plugin instance', function () {
         var sheet: trc.Sheet = new mock.Sheet();
-        obj = new MyPluginX(sheet, null, null);
-    });
-    it('double value ', function () {
-        assert.equal(10, obj.doubleit(5));
+        obj = new MyPluginX(sheet, null, null, null, null, null);
     });
 });
-
